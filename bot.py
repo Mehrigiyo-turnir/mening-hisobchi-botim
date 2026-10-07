@@ -10,7 +10,18 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from flask import Flask
+import threading
 
+app_flask = Flask(__name__)
+@app_flask.route('/')
+def home():
+    return "Bot ishlayapti!"
+
+def run_flask():
+    app_flask.run(host='0.0.0.0', port=10000)
+
+threading.Thread(target=run_flask, daemon=True).start()
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
