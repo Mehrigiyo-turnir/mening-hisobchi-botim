@@ -299,7 +299,7 @@ async def menyu_hisoboti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     davr = HISOBOT_TUGMALARI.get(m.text)
     if davr is not None: await hisobotni_yubor(update, davr)
 
-# ================= OVOZLI FUNKSIYA - YANGI =================
+# ================= OVOZLI FUNKSIYA - TUZATILGAN =================
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
     if m is None: return
@@ -335,7 +335,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     try:
                         text_transcribed = r.recognize_google(audio_data, language="uz-UZ")
                     except:
-                        text_transcribed = r.recognize_google(audio_data, language="ru-RU")
+                        try:
+                            text_transcribed = r.recognize_google(audio_data, language="tr-TR")
+                        except:
+                            text_transcribed = r.recognize_google(audio_data, language="ru-RU")
                 wav_path.unlink(missing_ok=True)
             except Exception as e:
                 logger.error(f"SpeechRecognition xato: {e}")
@@ -344,8 +347,30 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await m.reply_text("😕 Ovozni tushunmadim, qayta ayta olasizmi? Masalan: 50 ming chiqim bozordan", reply_markup=HISOBOT_KLAVIATURASI)
             return
         await m.reply_text(f"🎧 Tushundim: \"{text_transcribed}\"", reply_markup=HISOBOT_KLAVIATURASI)
-        m.text = text_transcribed
-        await yoz(update, context)
+        past = text_transcribed.lower()
+        summa, turi = summa_top(text_transcribed)
+        if summa <= 0 and "hisobot" in past:
+            if "bugun" in past: await hisobotni_yubor(update, "bugun")
+            elif "kecha" in past: await hisobotni_yubor(update, "kecha")
+            elif "hafta" in past: await hisobotni_yubor(update, "hafta")
+            elif "oy" in past: await hisobotni_yubor(update, "oy")
+            elif "yil" in past: await hisobotni_yubor(update, "yil")
+            else: await hisobotni_yubor(update, "jami")
+            return
+        if summa <= 0:
+            await m.reply_text("Summani tushunmadim. Masalan: bugun 50 ming ketdi", reply_markup=HISOBOT_KLAVIATURASI)
+            return
+        now = datetime.now(TOSHKENT); sana = sanani_top(text_transcribed, now.date()); vaqt = now.strftime("%H:%M")
+        try:
+            if USE_DB:
+                c = get_db_conn(); cur = c.cursor()
+                cur.execute("INSERT INTO hisobot (sana,turi,summa,matn,vaqt) VALUES (%s,%s,%s,%s,%s)", (sana,turi,summa,text_transcribed,vaqt))
+                c.commit(); cur.close(); c.close()
+            else:
+                with FAYL.open("a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([sana,turi,summa,text_transcribed,vaqt])
+        except Exception:
+            logger.exception("Saqlashda xato"); await m.reply_text("Yozuvni saqlashda xatolik.", reply_markup=HISOBOT_KLAVIATURASI); return
+        await m.reply_text(f"✅ {sanani_korsatish(sana)} | {turi} {summa:,} so'm saqlandi\n📝 {text_transcribed}", reply_markup=HISOBOT_KLAVIATURASI)
     except Exception as e:
         logger.exception("Voice handler xato")
         await m.reply_text(f"Ovozli xabarda xatolik: {e}", reply_markup=HISOBOT_KLAVIATURASI)
