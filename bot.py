@@ -1,4 +1,4 @@
-"""Telegram bot for recording income and expenses - Postgres version."""
+"""Telegram bot for recording income and expenses - Postgres version + Voice."""
 
 import csv
 import logging
@@ -64,7 +64,6 @@ logger = logging.getLogger(__name__)
 FAYL = Path(__file__).resolve().with_name("hisobot.csv")
 TOSHKENT = ZoneInfo("Asia/Tashkent")
 
-#... qolgan kodlaringiz o'zgarmadi...
 HISOBOT_TUGMALARI = {
     "📅 Bugungi hisobot": "bugun",
     "📆 Kechagi hisobot": "kecha",
@@ -149,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
     if m is None: return
     if not egasimi(update): await shaxsiyligini_ayt(update); return
-    await m.reply_text("Kirim-chiqim botiga xush kelibsiz!\nMasalan: bugun 50 ming tushlik qildim\nYoki: kecha krim 2 mln maosh keldi\n/hisobot — jami hisobotni ko'rish", reply_markup=HISOBOT_KLAVIATURASI)
+    await m.reply_text("Kirim-chiqim botiga xush kelibsiz!\nMasalan: bugun 50 ming tushlik qildim\nYoki: kecha krim 2 mln maosh keldi\n/hisobot — jami hisobotni ko'rish\n\n🎤 Endi ovozli xabar bilan ham yozishingiz mumkin!", reply_markup=HISOBOT_KLAVIATURASI)
 
 async def yoz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
@@ -157,6 +156,15 @@ async def yoz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not egasimi(update): await shaxsiyligini_ayt(update); return
     summa, turi = summa_top(m.text)
     if summa <= 0:
+        past = m.text.lower()
+        if "hisobot" in past:
+            if "bugun" in past: await hisobotni_yubor(update, "bugun")
+            elif "kecha" in past: await hisobotni_yubor(update, "kecha")
+            elif "hafta" in past: await hisobotni_yubor(update, "hafta")
+            elif "oy" in past: await hisobotni_yubor(update, "oy")
+            elif "yil" in past: await hisobotni_yubor(update, "yil")
+            else: await hisobotni_yubor(update, "jami")
+            return
         await m.reply_text("Summani tushunmadim. Masalan: bugun 50 ming ketdi", reply_markup=HISOBOT_KLAVIATURASI); return
     now = datetime.now(TOSHKENT); sana = sanani_top(m.text, now.date()); vaqt = now.strftime("%H:%M")
     try:
@@ -168,7 +176,7 @@ async def yoz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             with FAYL.open("a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([sana,turi,summa,m.text,vaqt])
     except Exception:
         logger.exception("Saqlashda xato"); await m.reply_text("Yozuvni saqlashda xatolik.", reply_markup=HISOBOT_KLAVIATURASI); return
-    await m.reply_text(f"✅ {sanani_korsatish(sana)} | {turi} {summa:,} so'm saqlandi", reply_markup=HISOBOT_KLAVIATURASI)
+    await m.reply_text(f"✅ {sanani_korsatish(sana)} | {turi} {summa:,} so'm saqlandi\n📝 {m.text}", reply_markup=HISOBOT_KLAVIATURASI)
 
 def hisobot_oraligini_top(davr: str) -> tuple[date | None, date | None, str]:
     bugun = datetime.now(TOSHKENT).date()
@@ -291,6 +299,57 @@ async def menyu_hisoboti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     davr = HISOBOT_TUGMALARI.get(m.text)
     if davr is not None: await hisobotni_yubor(update, davr)
 
+# ================= OVOZLI FUNKSIYA - YANGI =================
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    m = update.effective_message
+    if m is None: return
+    if not egasimi(update): await shaxsiyligini_ayt(update); return
+    await m.reply_text("🎤 Ovozni tinglayapman...", reply_markup=HISOBOT_KLAVIATURASI)
+    try:
+        voice = m.voice
+        if voice is None: return
+        ogg_path = Path(tempfile.gettempdir()) / f"voice_{voice.file_id}.ogg"
+        tg_file = await context.bot.get_file(voice.file_id)
+        await tg_file.download_to_drive(ogg_path)
+        text_transcribed = ""
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=openai_key)
+                with open(ogg_path, "rb") as audio_file:
+                    tr = client.audio.transcriptions.create(model="whisper-1", file=audio_file, language="uz")
+                    text_transcribed = tr.text
+            except Exception as e:
+                logger.error(f"OpenAI Whisper xato: {e}")
+        if not text_transcribed:
+            try:
+                import speech_recognition as sr
+                from pydub import AudioSegment
+                wav_path = ogg_path.with_suffix(".wav")
+                audio = AudioSegment.from_ogg(ogg_path)
+                audio.export(wav_path, format="wav")
+                r = sr.Recognizer()
+                with sr.AudioFile(str(wav_path)) as source:
+                    audio_data = r.record(source)
+                    try:
+                        text_transcribed = r.recognize_google(audio_data, language="uz-UZ")
+                    except:
+                        text_transcribed = r.recognize_google(audio_data, language="ru-RU")
+                wav_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.error(f"SpeechRecognition xato: {e}")
+        ogg_path.unlink(missing_ok=True)
+        if not text_transcribed or len(text_transcribed.strip()) < 2:
+            await m.reply_text("😕 Ovozni tushunmadim, qayta ayta olasizmi? Masalan: 50 ming chiqim bozordan", reply_markup=HISOBOT_KLAVIATURASI)
+            return
+        await m.reply_text(f"🎧 Tushundim: \"{text_transcribed}\"", reply_markup=HISOBOT_KLAVIATURASI)
+        m.text = text_transcribed
+        await yoz(update, context)
+    except Exception as e:
+        logger.exception("Voice handler xato")
+        await m.reply_text(f"Ovozli xabarda xatolik: {e}", reply_markup=HISOBOT_KLAVIATURASI)
+
 async def xatolikni_qayd_et(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.error is not None: logger.error("Xatolik", exc_info=(type(context.error), context.error, context.error.__traceback__))
 
@@ -304,9 +363,10 @@ def main() -> None:
     ilova.add_handler(CommandHandler("hisobot", hisobot))
     ilova.add_handler(CallbackQueryHandler(batafsil_hisobot))
     ilova.add_handler(MessageHandler(HISOBOT_TUGMASI_FILTERI, menyu_hisoboti))
+    ilova.add_handler(MessageHandler(filters.VOICE, handle_voice))
     ilova.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, yoz))
     ilova.add_error_handler(xatolikni_qayd_et)
-    logger.info("Bot ishga tushmoqda.")
+    logger.info("Bot ishga tushmoqda - voice enabled.")
     ilova.run_polling()
 
 if __name__ == "__main__": main()
