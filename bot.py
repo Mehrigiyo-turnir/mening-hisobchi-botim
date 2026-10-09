@@ -1,4 +1,4 @@
-"""Telegram bot for recording income and expenses - Postgres version + Voice + Delete - FINAL"""
+"""Telegram bot for recording income and expenses - FINAL SMART DELETE"""
 
 import csv
 import logging
@@ -78,7 +78,7 @@ def sanani_korsatish(sana: date | str) -> str:
     return sana.strftime("%d.%m.%Y")
 
 def summa_top(matn: str) -> tuple[int, str]:
-    kichik = matn.lower().replace("’", "'").replace("‘", "'").replace("ʻ", "'").replace("ʼ", "'")
+    kichik = matn.lower().replace("`", "'").replace("’", "'").replace("‘", "'").replace("ʻ", "'").replace("ʼ", "'")
     million = re.search(r"(\d+(?:[.,]\d+)?)\s*mln\b", kichik)
     ming = re.search(r"(\d+)\s*ming\b", kichik)
     oddiy = re.search(r"\b(\d{4,})\b", kichik)
@@ -111,70 +111,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
     if m is None: return
     if not egasimi(update): await shaxsiyligini_ayt(update); return
-    await m.reply_text("Kirim-chiqim botiga xush kelibsiz!\nMasalan: bugun 50 ming tushlik qildim\n/hisobot — jami hisobot\n🎤 Ovozli xabar ham mumkin!\n🗑 O'chirish: `50 ming tushlik o'chir`", reply_markup=HISOBOT_KLAVIATURASI)
+    await m.reply_text("Kirim-chiqim botiga xush kelibsiz!\nMasalan: bugun 50 ming tushlik qildim\n/hisobot — jami hisobot\n🎤 Ovozli xabar ham mumkin!\n🗑 O'chirish: 1175000 o'chir yoki lavanda o'chir", reply_markup=HISOBOT_KLAVIATURASI)
 
-# ================= O'CHIRISH FUNKSIYASI =================
+# ================= SMART O'CHIRISH =================
 def yozuvni_ochir_qidirib(qidiruv_matni: str) -> tuple[bool, str]:
     if not qidiruv_matni: return False, "Matn yo'q"
-    qidiruv_matni = qidiruv_matni.lower().strip()
+    norm = qidiruv_matni.lower().replace("`", "'").replace("’", "'").replace("‘", "'").replace("ʻ", "'").replace("ʼ", "'").strip()
+    summa_qidiruv, _ = summa_top(qidiruv_matni)
+
     if USE_DB:
         try:
             c = get_db_conn()
             cur = c.cursor(cursor_factory=psycopg2.extras.DictCursor)
             cur.execute("SELECT id, matn, summa, turi FROM hisobot ORDER BY id DESC")
             rows = cur.fetchall()
+
+            if summa_qidiruv > 0:
+                for r in rows:
+                    if int(r["summa"]) == summa_qidiruv:
+                        cur.execute("DELETE FROM hisobot WHERE id = %s", (r["id"],))
+                        c.commit(); cur.close(); c.close()
+                        return True, f"{r['turi']} {int(r['summa']):,} so'm - {r['matn']}"
+
             for r in rows:
-                if qidiruv_matni in (r["matn"] or "").lower():
+                if norm in (r["matn"] or "").lower():
                     cur.execute("DELETE FROM hisobot WHERE id = %s", (r["id"],))
                     c.commit(); cur.close(); c.close()
                     return True, f"{r['turi']} {int(r['summa']):,} so'm - {r['matn']}"
+
             cur.close(); c.close()
             return False, f"'{qidiruv_matni}' topilmadi"
         except Exception as e:
             logger.error(f"O'chirish xato: {e}"); return False, str(e)
     else:
-        try:
-            if not FAYL.exists(): return False, "Fayl yo'q"
-            with FAYL.open("r", newline="", encoding="utf-8") as f: qatorlar = list(csv.DictReader(f))
-            idx = -1
-            for i in range(len(qatorlar)-1, -1, -1):
-                if qidiruv_matni in (qatorlar[i].get("matn") or "").lower(): idx = i; break
-            if idx == -1: return False, f"'{qidiruv_matni}' topilmadi"
-            och = qatorlar.pop(idx)
-            with FAYL.open("w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["sana","turi","summa","matn","vaqt"])
-                writer.writeheader(); writer.writerows(qatorlar)
-            return True, f"{och['turi']} {int(och['summa']):,} so'm - {och['matn']}"
-        except Exception as e: return False, str(e)
-
-async def ochirish_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    m = update.effective_message
-    if m is None or m.text is None: return
-    if not egasimi(update): await shaxsiyligini_ayt(update); return
-    txt = m.text.strip()
-    low = txt.lower()
-    # o'chir bilan tugaydimi?
-    if not low.endswith(("ochir", "o'chir", "o‘chir", "o’chir", "ochir.", "o'chir.")):
-        return
-    qidiruv = ""
-    for suf in ["o'chir.", "o'chir", "o‘chir", "o’chir", "ochir.", "ochir"]:
-        if low.endswith(suf):
-            qidiruv = txt[: -len(suf)].strip()
-            break
-    if not qidiruv:
-        await m.reply_text("Nimani o'chirishni yozmadingiz. Masalan: 50 ming tushlik o'chir", reply_markup=HISOBOT_KLAVIATURASI)
-        return
-    ok, info = yozuvni_ochir_qidirib(qidiruv)
-    if ok: await m.reply_text(f"🗑 O'chirildi:\n{info}", reply_markup=HISOBOT_KLAVIATURASI)
-    else: await m.reply_text(f"❌ O'chirilmadi: {info}", reply_markup=HISOBOT_KLAVIATURASI)
+        return False, "CSV"
 
 async def yoz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
     if m is None or m.text is None: return
     if not egasimi(update): await shaxsiyligini_ayt(update); return
-    # Agar bu o'chirish buyrug'i bo'lsa, yozmaymiz
-    if m.text.lower().strip().endswith(("ochir", "o'chir", "o‘chir", "o’chir", "ochir.", "o'chir.")):
+
+    txt = m.text.strip()
+    low = txt.lower().replace("`", "'").replace("’", "'").replace("‘", "'")
+
+    if low.endswith(("ochir", "o'chir", "o`chir", "o‘chir", "o’chir", "ochir.", "o'chir.")):
+        qidiruv = ""
+        for suf in ["o'chir.", "o'chir", "o`chir", "o‘chir", "o’chir", "ochir.", "ochir"]:
+            if low.endswith(suf):
+                qidiruv = txt[: -len(suf)].strip()
+                break
+        if not qidiruv:
+            await m.reply_text("Nimani o'chirishni yozmadingiz", reply_markup=HISOBOT_KLAVIATURASI); return
+        ok, info = yozuvni_ochir_qidirib(qidiruv)
+        if ok: await m.reply_text(f"🗑 O'chirildi:\n{info}", reply_markup=HISOBOT_KLAVIATURASI)
+        else: await m.reply_text(f"❌ Topilmadi: {info}", reply_markup=HISOBOT_KLAVIATURASI)
         return
+
     summa, turi = summa_top(m.text)
     if summa <= 0:
         past = m.text.lower()
@@ -358,18 +350,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             except Exception as e: logger.error(f"SpeechRecognition xato: {e}")
         ogg_path.unlink(missing_ok=True)
         if not text_transcribed or len(text_transcribed.strip()) < 2:
-            await m.reply_text("😕 Ovozni tushunmadim, qayta ayta olasizmi?", reply_markup=HISOBOT_KLAVIATURASI); return
+            await m.reply_text("😕 Ovozni tushunmadim", reply_markup=HISOBOT_KLAVIATURASI); return
         await m.reply_text(f"🎧 Tushundim: \"{text_transcribed}\"", reply_markup=HISOBOT_KLAVIATURASI)
-        past = text_transcribed.lower()
         summa, turi = summa_top(text_transcribed)
-        if summa <= 0 and "hisobot" in past:
-            if "bugun" in past: await hisobotni_yubor(update, "bugun")
-            elif "kecha" in past: await hisobotni_yubor(update, "kecha")
-            elif "hafta" in past: await hisobotni_yubor(update, "hafta")
-            elif "oy" in past: await hisobotni_yubor(update, "oy")
-            elif "yil" in past: await hisobotni_yubor(update, "yil")
-            else: await hisobotni_yubor(update, "jami")
-            return
         if summa <= 0:
             await m.reply_text("Summani tushunmadim.", reply_markup=HISOBOT_KLAVIATURASI); return
         now = datetime.now(TOSHKENT); sana = sanani_top(text_transcribed, now.date()); vaqt = now.strftime("%H:%M")
@@ -400,10 +383,9 @@ def main() -> None:
     ilova.add_handler(CallbackQueryHandler(batafsil_hisobot))
     ilova.add_handler(MessageHandler(HISOBOT_TUGMASI_FILTERI, menyu_hisoboti))
     ilova.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    ilova.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ochirish_handler))
     ilova.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, yoz))
     ilova.add_error_handler(xatolikni_qayd_et)
-    logger.info("Bot ishga tushmoqda - FINAL")
+    logger.info("Bot ishga tushmoqda - FINAL SMART DELETE")
     ilova.run_polling()
 
 if __name__ == "__main__":
