@@ -1,4 +1,4 @@
-"""Telegram bot for recording income and expenses - Postgres version + Voice."""
+"""Telegram bot for recording income and expenses - Postgres version + Voice + Delete."""
 
 import csv
 import logging
@@ -148,7 +148,73 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
     if m is None: return
     if not egasimi(update): await shaxsiyligini_ayt(update); return
-    await m.reply_text("Kirim-chiqim botiga xush kelibsiz!\nMasalan: bugun 50 ming tushlik qildim\nYoki: kecha krim 2 mln maosh keldi\n/hisobot — jami hisobotni ko'rish\n\n🎤 Endi ovozli xabar bilan ham yozishingiz mumkin!", reply_markup=HISOBOT_KLAVIATURASI)
+    await m.reply_text("Kirim-chiqim botiga xush kelibsiz!\nMasalan: bugun 50 ming tushlik qildim\nYoki: kecha krim 2 mln maosh keldi\n/hisobot — jami hisobotni ko'rish\n\n🎤 Ovozli xabar bilan ham yozishingiz mumkin!\n🗑 O'chirish uchun: `50 ming tushlik o'chir` deb yozing", reply_markup=HISOBOT_KLAVIATURASI)
+
+# ================= YANGI: O'CHIRISH FUNKSIYASI =================
+def yozuvni_ochir_qidirib(qidiruv_matni: str) -> tuple[bool, str]:
+    if not qidiruv_matni:
+        return False, "O'chirish uchun matn topilmadi"
+    qidiruv_matni = qidiruv_matni.lower().strip()
+    if USE_DB:
+        try:
+            c = get_db_conn()
+            cur = c.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cur.execute("SELECT id, matn, summa, turi FROM hisobot ORDER BY id DESC")
+            rows = cur.fetchall()
+            for r in rows:
+                if qidiruv_matni in (r["matn"] or "").lower():
+                    cur.execute("DELETE FROM hisobot WHERE id = %s", (r["id"],))
+                    c.commit()
+                    cur.close()
+                    c.close()
+                    return True, f"{r['turi']} {int(r['summa']):,} so'm - {r['matn']}"
+            cur.close()
+            c.close()
+            return False, f"'{qidiruv_matni}' ga o'xshash yozuv topilmadi"
+        except Exception as e:
+            logger.error(f"O'chirishda xato: {e}")
+            return False, str(e)
+    else:
+        try:
+            if not FAYL.exists(): return False, "Fayl yo'q"
+            with FAYL.open("r", newline="", encoding="utf-8") as f:
+                qatorlar = list(csv.DictReader(f))
+            topilgan_index = -1
+            for i in range(len(qatorlar)-1, -1, -1):
+                if qidiruv_matni in (qatorlar[i].get("matn") or "").lower():
+                    topilgan_index = i
+                    break
+            if topilgan_index == -1: return False, f"'{qidiruv_matni}' topilmadi"
+            ochirilgan = qatorlar.pop(topilgan_index)
+            with FAYL.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["sana","turi","summa","matn","vaqt"])
+                writer.writeheader()
+                writer.writerows(qatorlar)
+            return True, f"{ochirilgan['turi']} {int(ochirilgan['summa']):,} so'm - {ochirilgan['matn']}"
+        except Exception as e:
+            return False, str(e)
+
+async def ochirish_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    m = update.effective_message
+    if m is None or m.text is None: return
+    if not egasimi(update): await shaxsiyligini_ayt(update); return
+    past = m.text.lower().strip()
+    qidiruv = ""
+    if past.endswith("o'chir"): qidiruv = m.text[:-5].strip()
+    elif past.endswith("o‘chir"): qidiruv = m.text[:-5].strip()
+    elif past.endswith("o’chir"): qidiruv = m.text[:-5].strip()
+    elif past.endswith("ochir"): qidiruv = m.text[:-5].strip()
+    elif past.endswith("o'chir."): qidiruv = m.text[:-6].strip()
+    else: return
+
+    if not qidiruv:
+        await m.reply_text("Qaysi yozuvni o'chirishni yozmadingiz. Masalan:\n`bugun 50 ming tushlik o'chir`", reply_markup=HISOBOT_KLAVIATURASI)
+        return
+    muvaffaqiyat, info = yozuvni_ochir_qidirib(qidiruv)
+    if muvaffaqiyat:
+        await m.reply_text(f"🗑 O'chirildi:\n{info}", reply_markup=HISOBOT_KLAVIATURASI)
+    else:
+        await m.reply_text(f"❌ O'chirilmadi: {info}", reply_markup=HISOBOT_KLAVIATURASI)
 
 async def yoz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
@@ -299,7 +365,7 @@ async def menyu_hisoboti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     davr = HISOBOT_TUGMALARI.get(m.text)
     if davr is not None: await hisobotni_yubor(update, davr)
 
-# ================= OVOZLI FUNKSIYA - TUZATILGAN =================
+# ================= OVOZLI FUNKSIYA - TIMEOUT TUZATILDI =================
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.effective_message
     if m is None: return
@@ -316,7 +382,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if openai_key:
             try:
                 from openai import OpenAI
-                client = OpenAI(api_key=openai_key)
+                client = OpenAI(api_key=openai_key, timeout=60.0)
                 with open(ogg_path, "rb") as audio_file:
                     tr = client.audio.transcriptions.create(model="whisper-1", file=audio_file, language="uz")
                     text_transcribed = tr.text
@@ -389,9 +455,11 @@ def main() -> None:
     ilova.add_handler(CallbackQueryHandler(batafsil_hisobot))
     ilova.add_handler(MessageHandler(HISOBOT_TUGMASI_FILTERI, menyu_hisoboti))
     ilova.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    # MUHIM: o'chirish handleri yoz dan OLDIN bo'lishi kerak
+    ilova.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"(?i).*(o'|o‘|o’)?chir\.?$"), ochirish_handler))
     ilova.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, yoz))
     ilova.add_error_handler(xatolikni_qayd_et)
-    logger.info("Bot ishga tushmoqda - voice enabled.")
+    logger.info("Bot ishga tushmoqda - voice + delete enabled.")
     ilova.run_polling()
 
 if __name__ == "__main__": main()
